@@ -1,0 +1,155 @@
+import QtQuick
+import Quickshell
+import Quickshell.Io
+import "../IconMap.js" as IconMap
+
+Item {
+    id: rootMod
+    required property var root
+
+    property int updateCount: 0
+    property int systemCount: 0
+    property int aurCount: 0
+    property bool refreshing: false
+
+    readonly property bool hasUpdates: rootMod.updateCount > 0
+
+    implicitWidth: 26
+    implicitHeight: 28
+
+    IpcHandler {
+        target: "omaniri.system-update"
+        function refresh(): void { rootMod.doRefresh() }
+    }
+
+    Process {
+        id: checkProc
+        running: false
+        stdout: StdioCollector {
+            onStreamFinished: {
+                rootMod.parseOutput(this.text)
+                rootMod.refreshing = false
+                refreshWatchdog.stop()
+            }
+        }
+        onExited: (exitCode) => {
+            if (exitCode !== 0) rootMod.refreshing = false
+            refreshWatchdog.stop()
+        }
+    }
+
+    // safety: if the check ever hangs (AUR RPC stalls past the timeout), unstick
+    // `refreshing` so future refreshes aren't blocked forever
+    Timer { id: refreshWatchdog; interval: 45000; onTriggered: rootMod.refreshing = false }
+
+    Timer {
+        interval: 1800000; running: true; repeat: true; triggeredOnStart: true
+        onTriggered: root.archRefreshTick++
+    }
+
+    property int extTrigger: root.archRefreshTick
+    onExtTriggerChanged: {
+        if (!rootMod.refreshing) rootMod.doRefresh()
+    }
+
+    function doRefresh() {
+        var cmd = [
+            "bash", "-c",
+            "LC_ALL=C pacman -Qu 2>/dev/null | while read n o _ v; do echo \"S|\"$n\"|\"$o\"|\"$v; done; " +
+            "if command -v paru &>/dev/null; then timeout 30 paru -Qum 2>/dev/null | while read n o _ v; do echo \"A|\"$n\"|\"$o\"|\"$v; done; " +
+            "elif command -v yay &>/dev/null; then timeout 30 yay -Qum 2>/dev/null | while read n o _ v; do echo \"A|\"$n\"|\"$o\"|\"$v; done; fi"
+        ]
+        rootMod.refreshing = true
+        refreshWatchdog.restart()
+        checkProc.command = cmd
+        checkProc.running = false
+        checkProc.running = true
+    }
+
+    function parseOutput(text) {
+        var lines = text.trim().split("\n")
+        var updates = []
+        var sysCount = 0; var aCount = 0
+        for (var i = 0; i < lines.length; i++) {
+            var parts = lines[i].split("|")
+            if (parts.length >= 4) {
+                var src = parts[0]
+                var entry = {name: parts[1], oldVer: parts[2], newVer: parts[3], source: src === "S" ? "system" : "aur"}
+                updates.push(entry)
+                if (src === "S") sysCount++
+                else if (src === "A") aCount++
+            }
+        }
+        rootMod.systemCount = sysCount
+        rootMod.aurCount = aCount
+        rootMod.updateCount = sysCount + aCount
+        root.archUpdates = updates
+    }
+
+    Item {
+        anchors.centerIn: parent
+        width: 20
+        height: 20
+
+        Text {
+            id: ic
+            anchors.centerIn: parent
+            text: rootMod.refreshing ? "\uE5D5" : IconMap.icon("package_2")
+            color: rootMod.refreshing
+                ? Qt.rgba(root.sumi.r, root.sumi.g, root.sumi.b, 1)
+                : (rootMod.hasUpdates ? root.seal : Qt.rgba(root.ink.r, root.ink.g, root.ink.b, 0.4))
+            font.family: "Material Symbols Rounded"
+            font.pixelSize: 14
+        }
+
+        Rectangle {
+            visible: rootMod.hasUpdates && !rootMod.refreshing
+            anchors.verticalCenter: ic.verticalCenter
+            anchors.verticalCenterOffset: -6
+            anchors.horizontalCenter: ic.horizontalCenter
+            anchors.horizontalCenterOffset: 7
+            width: Math.max(12, badgeText.implicitWidth + 6)
+            height: 12
+            radius: 6
+            color: root.seal
+
+            Text {
+                id: badgeText
+                anchors.centerIn: parent
+                text: rootMod.updateCount > 99 ? "99+" : String(rootMod.updateCount)
+                color: root.paper
+                font.family: root.mono
+                font.pixelSize: 7
+                font.weight: Font.Bold
+            }
+        }
+    }
+
+    readonly property string tooltipText: {
+        if (rootMod.refreshing) return ""
+        if (rootMod.updateCount === 0) return "Up to date"
+        var parts = []
+        if (rootMod.systemCount) parts.push(rootMod.systemCount + " system")
+        if (rootMod.aurCount) parts.push(rootMod.aurCount + " AUR")
+        return parts.join(" \u00B7 ") + "\nClick to view details"
+    }
+
+    TooltipMixin { id: tip; root: rootMod.root; owner: rootMod; text: rootMod.tooltipText }
+
+    MouseArea {
+        id: mouse
+        anchors.fill: parent
+        hoverEnabled: true; cursorShape: Qt.PointingHandCursor
+        acceptedButtons: Qt.LeftButton | Qt.RightButton
+        onEntered: { tip.show(); }
+        onExited: { tip.hide(); }
+        onClicked: (e) => {
+            tip.hide();
+            if (e.button === Qt.RightButton) {
+                root.archRefreshTick++;
+            } else {
+                root.archVisible = true;
+            }
+        }
+    }
+}
