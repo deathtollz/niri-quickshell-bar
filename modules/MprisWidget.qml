@@ -198,19 +198,21 @@ Item {
         // ── equalizer canvas ──
         Canvas {
             id: eqCanvas
-            implicitWidth: 16
-            width: 16
+            implicitWidth: 20
+            width: 20
             height: 14
             anchors.verticalCenter: parent.verticalCenter
 
-            property color tint: root.seal
-            onTintChanged: requestPaint()
+            property color col1: "#e06c75"
+            property color col2: "#e5c07b"
+            property color col3: "#d19a66"
 
             onPaint: {
                 var ctx = getContext("2d")
                 ctx.clearRect(0, 0, width, height)
 
                 var bars   = [rootMod.barH1, rootMod.barH2, rootMod.barH3]
+                var colors = [eqCanvas.col1, eqCanvas.col2, eqCanvas.col3]
                 var bw     = 3
                 var gap    = 2
                 var totalW = bars.length * bw + (bars.length - 1) * gap
@@ -218,9 +220,8 @@ Item {
                 var maxH   = height - 1
                 var r      = bw / 2
 
-                ctx.fillStyle = eqCanvas.tint
-
                 for (var i = 0; i < bars.length; i++) {
+                    ctx.fillStyle = colors[i]
                     var bh = Math.max(r * 2, bars[i] * maxH)
                     var x  = startX + i * (bw + gap)
                     var y  = height - bh
